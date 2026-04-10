@@ -36,7 +36,7 @@ async function rconCommand(srv, command) {
 
 async function getPlayerList(srv) {
   try {
-    const res = await rconCommand(srv, 'list');
+    const res = await rconCommand(srv, 'minecraft:list');
     const count = res.match(/There are (\d+) of/);
     if (!count || count[1] === '0') return [];
     const names = res.match(/online: (.+)$/);
