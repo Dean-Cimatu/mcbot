@@ -45,7 +45,7 @@ async function startStatusLoop(client) {
         if (!online) continue;
 
         try {
-          const listRes = await rconCommand(srv, 'list');
+          const listRes = await rconCommand(srv, 'minecraft:list');
           const countMatch = listRes.match(/There are (\d+) of/);
           const count = countMatch ? parseInt(countMatch[1]) : 0;
           const namesMatch = listRes.match(/online: (.+)$/);
@@ -115,9 +115,28 @@ async function startStatusLoop(client) {
     }
   }
 
+  async function blueMapUpdate() {
+    try {
+      const srvs = await getServers();
+      for (const srv of srvs) {
+        const online = await isPortOpen(process.env.PC_TAILSCALE_IP, srv.port);
+        if (!online) continue;
+        try {
+          await rconCommand(srv, 'bluemap update');
+          console.log(`BlueMap update triggered for ${srv.name}`);
+        } catch (err) {
+          console.error(`BlueMap update failed for ${srv.name}:`, err.message);
+        }
+      }
+    } catch (err) {
+      console.error('BlueMap update error:', err.message);
+    }
+  }
+
   await updateStatus();
   setInterval(updateStatus, 60_000);
   setInterval(autosave, 60 * 60 * 1000);
+  setInterval(blueMapUpdate, 60 * 60 * 1000);
 }
 
 module.exports = { startStatusLoop };

@@ -70,6 +70,12 @@ client.on('messageCreate', async msg => {
     if (cmd === 'backup') return commands.handleBackup(msg, parts[1]);
     if (cmd === 'log') return commands.handleLog(msg);
     if (cmd === 'console') return commands.handleConsole(msg, parts[1], parts.slice(2).join(' '));
+    if (cmd === 'panel') {
+      const { createInviteCode } = require('./../mcpanel/db');
+      const code = Math.random().toString(36).substring(2, 10).toUpperCase();
+      createInviteCode(code);
+      return msg.reply('**MCPanel**\nURL: http://100.79.153.43:3002\nInvite Code: ' + code + '\nExpires in 24 hours.');
+    }
   }
 
   if (!isApproved(msg.author.id) && !isOwner) return;

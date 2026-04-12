@@ -2,7 +2,7 @@ const { NodeSSH } = require('node-ssh');
 const { getServers, loadServers } = require('./servers');
 const { isPortOpen, rconCommand, getPlayerList, pollUntil, findServer, delay } = require('./utils');
 const { isApproved, approve, deny, getApproved } = require('./auth');
-const { checkAllStoppedAndShutdown, getLog, runDailyBackupIfNeeded } = require('./autoShutdown');
+const { checkAllStoppedAndShutdown, getLog, runHourlySnapshot, runShutdownBackup } = require('./autoShutdown');
 const { exec } = require('child_process');
 
 async function getSSH() {
@@ -158,28 +158,23 @@ async function handleStop(msg, serverId, client) {
       `Cannot stop ${srv.name} — ${players.length} player(s) online: ${players.join(', ')}`
     );
 
-  const m = await msg.reply(`Saving world and backing up ${srv.name}...`);
+  const m = await msg.reply(`Saving and stopping ${srv.name}...`);
   let ssh;
   try {
     ssh = await getSSH();
-
-    // Save world before backup
     try { await rconCommand(srv, 'save-all'); } catch {}
     await delay(3000);
-
-    const backup = await ssh.execCommand(
-      `powershell -File "C:\\MinecraftServer\\backup.ps1" -serverId ${srv.id}`
-    );
-
-    if (!backup.stdout.includes('backup_complete')) {
-      return m.edit(`Backup failed — ${srv.name} NOT stopped. Check PC manually.\nOutput: ${backup.stdout}\nError: ${backup.stderr}`);
-    }
-
-    await runDailyBackupIfNeeded(ssh, srv);
-    await m.edit(`Stopping ${srv.name}...`);
     await rconCommand(srv, 'stop');
     await delay(10000);
-    await m.edit(`**${srv.name} stopped** and world backed up.`);
+    await m.edit(`${srv.name} stopped — compressing backup...`);
+    const backup = await ssh.execCommand(
+      `powershell -File "C:\\MinecraftServer\\backup.ps1" -serverId ${srv.id} -shutdown`
+    );
+    if (backup.stdout.includes('backup_complete')) {
+      await m.edit(`**${srv.name} stopped** and archived successfully.`);
+    } else {
+      await m.edit(`**${srv.name} stopped.** Archive failed but hourly snapshots preserved.\nOutput: ${backup.stdout}`);
+    }
     await checkAllStoppedAndShutdown(client);
   } catch (err) {
     return m.edit(`SSH error: ${err.message}`);
@@ -242,10 +237,10 @@ async function handleBackup(msg, serverId) {
     }
 
     const backup = await ssh.execCommand(
-      `powershell -File "C:\\MinecraftServer\\backup.ps1" -serverId ${srv.id}`
+      `powershell -File "C:\\MinecraftServer\\backup.ps1" -serverId ${srv.id} -shutdown`
     );
     if (backup.stdout.includes('backup_complete')) {
-      await m.edit(`**${srv.name}** backed up successfully.`);
+      await m.edit(`**${srv.name}** archived successfully.`);
     } else {
       await m.edit(`Backup failed for ${srv.name}.\nOutput: ${backup.stdout}\nError: ${backup.stderr}`);
     }
