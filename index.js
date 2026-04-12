@@ -7,13 +7,23 @@ process.on('unhandledRejection', err => {
 });
 
 require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
 const http = require('http');
 const { Client, GatewayIntentBits, Partials } = require('discord.js');
 const { loadServers } = require('./servers');
 const { startStatusLoop } = require('./statusLoop');
 const { startAutoShutdownLoop } = require('./autoShutdown');
 const { isApproved } = require('./auth');
-const commands = require('./commands');
+
+// Auto-load all commands from commands/ folder
+const registry = new Map();
+const commandsPath = path.join(__dirname, 'commands');
+fs.readdirSync(commandsPath).filter(f => f.endsWith('.js')).forEach(file => {
+  const cmd = require(path.join(commandsPath, file));
+  registry.set(cmd.name, cmd);
+  console.log(`Loaded command: ${cmd.name}`);
+});
 
 const client = new Client({
   intents: [32767],
@@ -39,11 +49,7 @@ healthServer.listen(8766, () => console.log('Health endpoint running on :8766'))
 
 client.once('ready', async () => {
   console.log(`MCBot online as ${client.user.tag}`);
-  try {
-    await loadServers();
-  } catch (err) {
-    console.error('Failed to load servers on startup:', err.message);
-  }
+  try { await loadServers(); } catch (err) { console.error('Failed to load servers:', err.message); }
   startStatusLoop(client);
   startAutoShutdownLoop(client);
 });
@@ -53,40 +59,25 @@ client.on('messageCreate', async msg => {
   if (!msg.channel.isDMBased()) return;
 
   const parts = msg.content.trim().split(/\s+/);
-  const cmd = parts[0].toLowerCase();
+  const cmdName = parts[0].toLowerCase();
+  const args = parts.slice(1);
 
-  const ownerId = process.env.OWNER_ID;
-  const isOwner = msg.author.id === ownerId;
+  const isOwner = msg.author.id === process.env.OWNER_ID;
+  const approved = isApproved(msg.author.id);
 
-  if (cmd === 'link') return commands.handleLink(msg, parts[1]);
-  if (cmd === 'help') return commands.handleHelp(msg, isOwner);
+  const cmd = registry.get(cmdName);
+  if (!cmd) return;
 
-  if (isOwner) {
-    if (cmd === 'approve') return commands.handleApprove(msg, parts);
-    if (cmd === 'deny') return commands.handleDeny(msg, parts[1]);
-    if (cmd === 'reload') return commands.handleReload(msg, client);
-    if (cmd === 'shutdown') return commands.handleShutdown(msg, client);
-    if (cmd === 'approved') return commands.handleApproved(msg);
-    if (cmd === 'backup') return commands.handleBackup(msg, parts[1]);
-    if (cmd === 'log') return commands.handleLog(msg);
-    if (cmd === 'console') return commands.handleConsole(msg, parts[1], parts.slice(2).join(' '));
-    if (cmd === 'panel') {
-      const { createInviteCode } = require('./../mcpanel/db');
-      const code = Math.random().toString(36).substring(2, 10).toUpperCase();
-      createInviteCode(code);
-      return msg.reply('**MCPanel**\nURL: http://100.79.153.43:3002\nInvite Code: ' + code + '\nExpires in 24 hours.');
-    }
+  // Access control
+  if (cmd.ownerOnly && !isOwner) return;
+  if (cmd.approvedOnly && !approved && !isOwner) return;
+
+  try {
+    await cmd.run(msg, args, client, registry);
+  } catch (err) {
+    console.error(`Error in command ${cmdName}:`, err.message);
+    msg.reply(`Error: ${err.message}`).catch(() => {});
   }
-
-  if (!isApproved(msg.author.id) && !isOwner) return;
-
-  if (cmd === 'list') return commands.handleList(msg);
-  if (cmd === 'start') return commands.handleStart(msg, parts[1]);
-  if (cmd === 'stop') return commands.handleStop(msg, parts[1], client);
-  if (cmd === 'status') return commands.handleStatus(msg, parts[1]);
-  if (cmd === 'players') return commands.handlePlayers(msg, parts[1]);
-  if (cmd === 'say') return commands.handleSay(msg, parts[1], parts.slice(2).join(' '));
-  if (cmd === 'uptime') return commands.handleUptime(msg);
 });
 
 client.login(process.env.DISCORD_TOKEN);
