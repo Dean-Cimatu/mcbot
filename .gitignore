@@ -3,3 +3,4 @@ node_modules/
 approved-users.json
 servers.json
 *.log
+notify-subscriptions.json

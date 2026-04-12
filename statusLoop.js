@@ -1,6 +1,7 @@
 const { ActivityType } = require('discord.js');
 const { getServers } = require('./servers');
 const { isPortOpen, rconCommand } = require('./utils');
+const { getSubscribers } = require('./notifyStore');
 
 const playerCache = {};
 const serverStateCache = {};
@@ -57,6 +58,13 @@ async function startStatusLoop(client) {
 
           for (const p of joined) {
             owner.send(`👋 **${p}** joined **${srv.name}**`);
+            for (const subId of getSubscribers(srv.id)) {
+              if (subId === process.env.OWNER_ID) continue;
+              try {
+                const user = await client.users.fetch(subId);
+                user.send(`👋 **${p}** joined **${srv.name}**`);
+              } catch {}
+            }
             setTimeout(async () => {
               try {
                 const pingRes = await rconCommand(srv, 'spark ping');
