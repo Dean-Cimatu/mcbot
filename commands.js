@@ -172,6 +172,8 @@ async function handleStop(msg, serverId, client) {
     );
     if (backup.stdout.includes('backup_complete')) {
       await m.edit(`**${srv.name} stopped** and archived successfully.`);
+    } else if (backup.stdout.includes('world_not_found')) {
+      await m.edit(`**${srv.name} stopped.** No world data to back up.`);
     } else {
       await m.edit(`**${srv.name} stopped.** Archive failed but hourly snapshots preserved.\nOutput: ${backup.stdout}`);
     }
@@ -228,19 +230,18 @@ async function handleBackup(msg, serverId) {
   let ssh;
   try {
     ssh = await getSSH();
-
-    // Save world before backup if server is online
     const on = await isPortOpen(process.env.PC_TAILSCALE_IP, srv.port);
     if (on) {
       try { await rconCommand(srv, 'save-all'); } catch {}
       await delay(3000);
     }
-
     const backup = await ssh.execCommand(
       `powershell -File "C:\\MinecraftServer\\backup.ps1" -serverId ${srv.id} -shutdown`
     );
     if (backup.stdout.includes('backup_complete')) {
       await m.edit(`**${srv.name}** archived successfully.`);
+    } else if (backup.stdout.includes('world_not_found')) {
+      await m.edit(`**${srv.name}** has no world data yet — server not set up.`);
     } else {
       await m.edit(`Backup failed for ${srv.name}.\nOutput: ${backup.stdout}\nError: ${backup.stderr}`);
     }
