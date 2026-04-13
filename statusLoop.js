@@ -3,6 +3,8 @@ const { getServers } = require('./servers');
 const { isPortOpen, rconCommand } = require('./utils');
 const { getSubscribers } = require('./notifyStore');
 const { rotateLog, logServer } = require('./serverLogger');
+const { tickUptime, resetUptime, shouldSnapshot, recordSnapshot } = require('./snapshotManager');
+const { NodeSSH } = require('node-ssh');
 
 const playerCache = {};
 const serverStateCache = {};
@@ -22,6 +24,51 @@ function parseTPS(response) {
   };
 }
 
+async function getSSH() {
+  const ssh = new NodeSSH();
+  await ssh.connect({
+    host: process.env.PC_TAILSCALE_IP,
+    username: process.env.PC_SSH_USER,
+    privateKeyPath: `${process.env.HOME}/.ssh/id_ed25519`,
+    readyTimeout: 15000,
+    keepaliveInterval: 0,
+    keepaliveCountMax: 0
+  });
+  try {
+    const conn = ssh.connection;
+    if (conn && conn._sock) {
+      conn._sock.on('error', err => console.error('SSH reset — ignoring.', err.code));
+    }
+  } catch {}
+  return ssh;
+}
+
+async function takeSnapshot(srv, players) {
+  let ssh;
+  try {
+    const playerStr = players.join(',');
+    ssh = await getSSH();
+    const result = await ssh.execCommand(
+      `powershell -File "C:\\MinecraftServer\\snapshot.ps1" -serverId ${srv.id} -playersOnline "${playerStr}"`
+    );
+    if (result.stdout.includes('snapshot_complete')) {
+      logServer(srv.id, `Daily snapshot taken: ${result.stdout.trim()}`);
+      recordSnapshot(srv.id);
+      return true;
+    } else if (result.stdout.includes('already_done')) {
+      recordSnapshot(srv.id);
+      return true;
+    }
+    logServer(srv.id, `Snapshot failed: ${result.stdout}`);
+    return false;
+  } catch (err) {
+    console.error(`Snapshot error for ${srv.name}:`, err.message);
+    return false;
+  } finally {
+    try { if (ssh) ssh.dispose(); } catch {}
+  }
+}
+
 async function startStatusLoop(client) {
   const owner = await client.users.fetch(process.env.OWNER_ID);
 
@@ -38,10 +85,13 @@ async function startStatusLoop(client) {
           serverStateCache[srv.id] = online;
           if (online) {
             rotateLog(srv.id);
-            logServer(srv.id, `Server started`);
+            logServer(srv.id, 'Server started');
             owner.send(`✅ **${srv.name}** has started.`);
+            // Trigger immediate BlueMap update on server start
+            try { await rconCommand(srv, 'bluemap update'); } catch {}
           } else {
-            logServer(srv.id, `Server stopped`);
+            logServer(srv.id, 'Server stopped');
+            resetUptime(srv.id);
             owner.send(`🔴 **${srv.name}** has stopped.`);
             playerCache[srv.id] = [];
           }
@@ -75,9 +125,7 @@ async function startStatusLoop(client) {
                 const pingRes = await rconCommand(srv, 'spark ping');
                 const clean = stripColorCodes(pingRes);
                 const lines = clean.split('\n').filter(l => l.includes(p));
-                if (lines.length) {
-                  owner.send(`📶 **${p}** ping: ${lines[0].trim()}`);
-                }
+                if (lines.length) owner.send(`📶 **${p}** ping: ${lines[0].trim()}`);
               } catch {}
             }, 10000);
           }
@@ -89,6 +137,21 @@ async function startStatusLoop(client) {
 
           playerCache[srv.id] = currentPlayers;
           onlineParts.push(`${srv.name}: ${count} online`);
+
+          // Tick uptime and check if snapshot needed
+          const uptime = tickUptime(srv.id);
+          if (uptime === 30 && shouldSnapshot(srv.id)) {
+            logServer(srv.id, 'Triggering BlueMap update before snapshot...');
+            try { await rconCommand(srv, 'bluemap update'); } catch {}
+            // Wait 60s for BlueMap to render then snapshot
+            setTimeout(async () => {
+              logServer(srv.id, 'Taking daily snapshot...');
+              const success = await takeSnapshot(srv, currentPlayers);
+              if (success) {
+                owner.send(`📸 Daily snapshot taken for **${srv.name}**.`);
+              }
+            }, 60000);
+          }
 
           const tpsRes = await rconCommand(srv, 'tps');
           const tps = parseTPS(tpsRes);
@@ -152,7 +215,14 @@ async function startStatusLoop(client) {
   await updateStatus();
   setInterval(updateStatus, 60_000);
   setInterval(autosave, 60 * 60 * 1000);
-  setInterval(blueMapUpdate, 60 * 60 * 1000);
+
+  // Clock-aligned hourly BlueMap update
+  const now = new Date();
+  const msToNextHour = (60 - now.getMinutes()) * 60000 - now.getSeconds() * 1000;
+  setTimeout(() => {
+    blueMapUpdate();
+    setInterval(blueMapUpdate, 60 * 60 * 1000);
+  }, msToNextHour);
 }
 
 module.exports = { startStatusLoop };

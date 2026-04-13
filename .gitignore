@@ -5,3 +5,4 @@ servers.json
 *.log
 notify-subscriptions.json
 logs/
+snapshots/
