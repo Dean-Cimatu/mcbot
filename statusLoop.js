@@ -2,6 +2,7 @@ const { ActivityType } = require('discord.js');
 const { getServers } = require('./servers');
 const { isPortOpen, rconCommand } = require('./utils');
 const { getSubscribers } = require('./notifyStore');
+const { rotateLog, logServer } = require('./serverLogger');
 
 const playerCache = {};
 const serverStateCache = {};
@@ -36,8 +37,11 @@ async function startStatusLoop(client) {
         if (online !== wasOnline) {
           serverStateCache[srv.id] = online;
           if (online) {
+            rotateLog(srv.id);
+            logServer(srv.id, `Server started`);
             owner.send(`✅ **${srv.name}** has started.`);
           } else {
+            logServer(srv.id, `Server stopped`);
             owner.send(`🔴 **${srv.name}** has stopped.`);
             playerCache[srv.id] = [];
           }
@@ -57,6 +61,7 @@ async function startStatusLoop(client) {
           const left = prevPlayers.filter(p => !currentPlayers.includes(p));
 
           for (const p of joined) {
+            logServer(srv.id, `${p} joined`);
             owner.send(`👋 **${p}** joined **${srv.name}**`);
             for (const subId of getSubscribers(srv.id)) {
               if (subId === process.env.OWNER_ID) continue;
@@ -78,6 +83,7 @@ async function startStatusLoop(client) {
           }
 
           for (const p of left) {
+            logServer(srv.id, `${p} left`);
             owner.send(`👋 **${p}** left **${srv.name}**`);
           }
 
@@ -87,6 +93,7 @@ async function startStatusLoop(client) {
           const tpsRes = await rconCommand(srv, 'tps');
           const tps = parseTPS(tpsRes);
           if (tps && tps.m1 < 15) {
+            logServer(srv.id, `TPS warning: ${tps.m1} (1m), ${tps.m5} (5m), ${tps.m15} (15m)`);
             owner.send(`⚠️ **${srv.name}** is lagging — TPS: ${tps.m1} (1m), ${tps.m5} (5m), ${tps.m15} (15m)`);
           }
         } catch {
@@ -113,6 +120,7 @@ async function startStatusLoop(client) {
         if (!online) continue;
         try {
           await rconCommand(srv, 'save-all');
+          logServer(srv.id, 'Autosaved');
           console.log(`Autosaved ${srv.name}`);
         } catch (err) {
           console.error(`Autosave failed for ${srv.name}:`, err.message);

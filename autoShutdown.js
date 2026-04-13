@@ -1,6 +1,7 @@
 const { NodeSSH } = require('node-ssh');
 const { getServers } = require('./servers');
 const { isPortOpen, rconCommand, getPlayerList, delay } = require('./utils');
+const { logServer } = require('./serverLogger');
 
 const emptyCounts = {};
 const activityLog = [];
@@ -16,7 +17,6 @@ function getLog() { return activityLog; }
 
 async function getSSH() {
   const ssh = new NodeSSH();
-  // Suppress socket-level errors so they don't become uncaught exceptions
   await ssh.connect({
     host: process.env.PC_TAILSCALE_IP,
     username: process.env.PC_SSH_USER,
@@ -25,7 +25,6 @@ async function getSSH() {
     keepaliveInterval: 0,
     keepaliveCountMax: 0
   });
-  // Attach error handler to the underlying socket immediately after connect
   try {
     const conn = ssh.connection;
     if (conn && conn._sock) {
@@ -42,14 +41,14 @@ async function runHourlySnapshot(ssh, srv) {
     const result = await ssh.execCommand(
       `powershell -File "C:\\MinecraftServer\\backup.ps1" -serverId ${srv.id} -hourly`
     );
-    if (result.stdout.includes('world_not_found')) {
-      return true; // silently skip — server not set up yet
-    }
+    if (result.stdout.includes('world_not_found')) return true;
     if (result.stdout.includes('hourly_complete')) {
       addLog(`Hourly snapshot complete for ${srv.name}`);
+      logServer(srv.id, 'Hourly snapshot complete');
       return true;
     }
     addLog(`Hourly snapshot failed for ${srv.name}: ${result.stdout}`);
+    logServer(srv.id, `Hourly snapshot failed: ${result.stdout}`);
     return false;
   } catch (err) {
     console.error(`Hourly snapshot error for ${srv.name}:`, err.message);
@@ -68,9 +67,11 @@ async function runShutdownBackup(ssh, srv) {
     }
     if (result.stdout.includes('backup_complete')) {
       addLog(`Shutdown backup complete for ${srv.name}`);
+      logServer(srv.id, 'Shutdown backup complete');
       return true;
     }
     addLog(`Shutdown backup failed for ${srv.name}: ${result.stdout}`);
+    logServer(srv.id, `Shutdown backup failed: ${result.stdout}`);
     return false;
   } catch (err) {
     console.error(`Shutdown backup error for ${srv.name}:`, err.message);
@@ -115,12 +116,11 @@ async function startAutoShutdownLoop(client) {
   const srvs = await getServers();
   srvs.forEach(s => { emptyCounts[s.id] = 0; });
 
-  // Hourly snapshot loop
   setInterval(async () => {
     let ssh;
     try {
       const pcUp = await isPortOpen(process.env.PC_TAILSCALE_IP, 22);
-      if (!pcUp) return; // PC is off — skip entirely
+      if (!pcUp) return;
       ssh = await getSSH();
       const servers = await getServers();
       for (const srv of servers) {
@@ -137,7 +137,6 @@ async function startAutoShutdownLoop(client) {
     }
   }, 60 * 60 * 1000);
 
-  // Auto shutdown loop
   setInterval(async () => {
     try {
       const srvs = await getServers();
@@ -155,17 +154,26 @@ async function startAutoShutdownLoop(client) {
         const threshold = Math.ceil(parseInt(process.env.EMPTY_TIMEOUT_MINS) / 5);
 
         if (emptyCounts[srv.id] === threshold - 1) {
-          try { await rconCommand(srv, 'say [MCBot] Server empty — shutting down in 5 minutes.'); addLog(`5 min warning sent to ${srv.name}`); } catch {}
+          try {
+            await rconCommand(srv, 'say [MCBot] Server empty — shutting down in 5 minutes.');
+            addLog(`5 min warning sent to ${srv.name}`);
+            logServer(srv.id, 'Auto-shutdown warning: 5 minutes');
+          } catch {}
           continue;
         }
         if (emptyCounts[srv.id] < threshold) continue;
         emptyCounts[srv.id] = 0;
 
-        try { await rconCommand(srv, 'say [MCBot] Server shutting down in 1 minute. Goodbye!'); addLog(`1 min warning sent to ${srv.name}`); } catch {}
+        try {
+          await rconCommand(srv, 'say [MCBot] Server shutting down in 1 minute. Goodbye!');
+          addLog(`1 min warning sent to ${srv.name}`);
+          logServer(srv.id, 'Auto-shutdown warning: 1 minute');
+        } catch {}
         await delay(60000);
 
         owner.send(`${srv.name} empty — saving and stopping...`);
         addLog(`Auto-stopping ${srv.name} due to inactivity`);
+        logServer(srv.id, 'Auto-stopping due to inactivity');
 
         let ssh;
         try {

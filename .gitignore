@@ -4,3 +4,4 @@ approved-users.json
 servers.json
 *.log
 notify-subscriptions.json
+logs/
