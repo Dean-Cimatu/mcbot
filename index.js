@@ -14,6 +14,7 @@ const { Client, GatewayIntentBits, Partials } = require('discord.js');
 const { loadServers } = require('./servers');
 const { startStatusLoop } = require('./statusLoop');
 const { startAutoShutdownLoop } = require('./autoShutdown');
+const { startIdleWatcher } = require('./idleWatcher');
 const { isApproved } = require('./auth');
 
 // Auto-load all commands from commands/ folder
@@ -52,6 +53,7 @@ client.once('ready', async () => {
   try { await loadServers(); } catch (err) { console.error('Failed to load servers:', err.message); }
   startStatusLoop(client);
   startAutoShutdownLoop(client);
+  startIdleWatcher(client);
 });
 
 client.on('messageCreate', async msg => {
@@ -68,7 +70,6 @@ client.on('messageCreate', async msg => {
   const cmd = registry.get(cmdName);
   if (!cmd) return;
 
-  // Access control
   if (cmd.ownerOnly && !isOwner) return;
   if (cmd.approvedOnly && !approved && !isOwner) return;
 
