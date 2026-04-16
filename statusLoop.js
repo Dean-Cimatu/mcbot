@@ -49,7 +49,7 @@ async function takeSnapshot(srv, players) {
     const playerStr = players.join(',');
     ssh = await getSSH();
     const result = await ssh.execCommand(
-      `powershell -File "C:\\MinecraftServer\\snapshot.ps1" -serverId ${srv.id} -playersOnline "${playerStr}"`
+      `powershell -File "C:\\MinecraftServer\\snapshot.ps1" -serverId ${srv.id} -playersOnline ${playerStr}`
     );
     if (result.stdout.includes('snapshot_complete')) {
       logServer(srv.id, `Daily snapshot taken: ${result.stdout.trim()}`);
